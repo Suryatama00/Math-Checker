@@ -1,42 +1,22 @@
 {
-  "kuadrat-latihan1": {
-    "title": "Latihan 1 - Fungsi Kuadrat",
+  "pemfaktoran-latihan1": {
+    "title": "Latihan 1 - Pemfaktoran Bentuk Kuadrat",
     "questions": {
-      "1a": "Sumbu simetri x = 0; Min y = -16; Titik potong X (4,0) dan (-4,0); Titik potong Y (0,-16)",
-      "1b": "Sumbu simetri x = -3; Min y = -4; Titik potong X (-1,0) dan (-5,0); Titik potong Y (0,5)",
-      "1c": "Sumbu simetri x = 1/4; Maks y = 25/8; Titik potong X (3/2,0) dan (-1,0); Titik potong Y (0,3)",
-      "2a": "h(5) = 275 m",
-      "2b": "t = 8 detik",
-      "2c": "h maks = 320 m",
-      "2d": "t = 16 detik",
-      "3a": "15 < x < 35",
-      "3b": "x < 15 atau x > 35",
-      "3c": "x = 25 (ratusan unit), laba maksimum = 200 juta rupiah"
-    }
-  },
-  "spldv-01": {
-    "title": "SPLDV - Latihan 1",
-    "questions": {
-      "1": "x = 2, y = 3",
-      "2": "x = 5, y = -1",
-      "3": "x = 4, y = 4"
-    }
-  },
-  "aljabar-01": {
-    "title": "Aljabar - Persamaan Linear",
-    "questions": {
-      "1": "5",
-      "2": "12",
-      "3": "7",
-      "4": "24"
-    }
-  },
-  "pecahan-01": {
-    "title": "Latihan Pecahan",
-    "questions": {
-      "1": "3/4",
-      "2": "2/5",
-      "3": "7/8"
+      "1": "(x+2)(x+3)=0",
+      "2": "(x+3)(x+4)=0",
+      "3": "(x+4)(x+5)=0",
+      "4": "(x+3)(x+8)=0",
+      "5": "(x+6)(x+7)=0",
+      "6": "(x-3)(x-5)=0",
+      "7": "(x-3)(x-7)=0",
+      "8": "(x-5)(x-7)=0",
+      "9": "(x-5)(x-9)=0",
+      "10": "(x-6)(x-9)=0",
+      "11": "(x+5)(x-2)=0",
+      "12": "(x-6)(x+4)=0",
+      "13": "(x+7)(x-3)=0",
+      "14": "(x-9)(x+4)=0",
+      "15": "(x+11)(x-3)=0"
     }
   }
 }
