@@ -135,9 +135,12 @@ Untuk SETIAP nomor pada kunci jawaban di atas:
 2. Bandingkan dengan kunci jawaban guru.
 3. Terima bentuk yang secara matematis setara (misalnya 1/2 setara 0.5)
    sebagai benar.
-4. Jika tulisan tangan tidak bisa dibaca dengan yakin, ATAU nomor tersebut
+4. Faktor perkalian yang dibolak-balik urutannya (sifat komutatif),
+    misalnya (x+2)(x+3)=0 dianggap SAMA dengan (x+3)(x+2)=0 — urutan
+    penulisan faktor tidak memengaruhi kebenaran jawaban
+5. Jika tulisan tangan tidak bisa dibaca dengan yakin, ATAU nomor tersebut
    tidak ditemukan di foto, gunakan status "unclear" — jangan menebak.
-5. Jangan menuliskan penjelasan, langkah pengerjaan, atau membocorkan
+6. Jangan menuliskan penjelasan, langkah pengerjaan, atau membocorkan
    kunci jawaban ke output.
 
 Kembalikan HANYA JSON dengan struktur berikut, tanpa teks lain:
