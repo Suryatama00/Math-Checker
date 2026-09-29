@@ -1,3 +1,5 @@
 streamlit
 google-genai
 python-dotenv
+gspread
+google-auth
