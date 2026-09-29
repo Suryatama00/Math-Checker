@@ -298,10 +298,17 @@ if image:
                     results=results,
                 )
                 st.info(
-                    f"Nilai: {summary['correct']} / {summary['total']} "
-                    f"benar ({summary['percentage']}%) — tersimpan untuk "
-                    f"**{nama}** ({kelas})"
+                    f"Nilai (akumulasi): {summary['correct']} / "
+                    f"{summary['total']} benar ({summary['percentage']}%) "
+                    f"— **{nama}** ({kelas})"
                 )
+                if summary["remaining"]:
+                    st.warning(
+                        "Masih perlu diulang nomor: "
+                        + ", ".join(summary["remaining"])
+                    )
+                else:
+                    st.success("🎉 Semua nomor sudah pernah benar!")
             except Exception as e:
                 st.error(
                     "Hasil berhasil dibaca, tapi GAGAL disimpan ke "
