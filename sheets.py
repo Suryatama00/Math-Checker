@@ -94,16 +94,11 @@ def get_spreadsheet():
 
 def _get_or_create_worksheet(sh, name: str, headers: list):
     try:
-        ws = sh.worksheet(name)
+        return sh.worksheet(name)
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet(title=name, rows=1000, cols=len(headers))
         ws.append_row(headers)
         return ws
-
-    if not ws.get_all_values():
-        ws.append_row(headers)
-
-    return ws
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -133,25 +128,41 @@ def _sort_key(n: str):
         return (1, int(digits) if digits else 0, letters)
 
 
-def _find_progress_row(ws, kelas: str, nama: str, activity_title: str):
-    """Cari baris progress yang sudah ada untuk siswa+aktivitas ini.
-    Return (nomor_baris_di_sheet, dict_baris) atau (None, None)."""
+def _get_progress_cache(ws):
+    """Cache isi sheet Progress di session_state, supaya cuma dibaca
+    SEKALI per sesi device (bukan setiap kali ada foto disimpan).
 
-    values = ws.get_all_values()
-    if len(values) < 2:
-        return None, None
+    Catatan: kalau 2 device kebetulan foto siswa yang SAMA untuk
+    aktivitas yang SAMA di waktu berdekatan, cache di device masing-
+    masing bisa saling menimpa (lost update). Aman selama tiap device
+    fokus ke kelas/siswa yang berbeda saat sesi foto berlangsung.
+    """
 
-    header = values[0]
-    for i, row in enumerate(values[1:], start=2):
-        row_dict = dict(zip(header, row))
-        if (
-            row_dict.get("Kelas") == kelas
-            and row_dict.get("Nama") == nama
-            and row_dict.get("Aktivitas") == activity_title
-        ):
-            return i, row_dict
+    if "progress_cache" not in st.session_state:
+        values = ws.get_all_values()
+        cache = {}
+        row_map = {}
 
-    return None, None
+        if len(values) >= 2:
+            header = values[0]
+            for i, row in enumerate(values[1:], start=2):
+                row_dict = dict(zip(header, row))
+                key = (
+                    row_dict.get("Kelas"),
+                    row_dict.get("Nama"),
+                    row_dict.get("Aktivitas"),
+                )
+                cache[key] = row_dict
+                row_map[key] = i
+
+        st.session_state["progress_cache"] = cache
+        st.session_state["progress_row_map"] = row_map
+        st.session_state["progress_next_row"] = max(len(values) + 1, 2)
+
+    return (
+        st.session_state["progress_cache"],
+        st.session_state["progress_row_map"],
+    )
 
 
 def save_results(
@@ -190,9 +201,13 @@ def save_results(
         ", ".join(sorted(attempt_incorrect, key=_sort_key)),
     ])
 
-    row_num, existing = _find_progress_row(
-        progress_ws, kelas, nama, activity_title
-    )
+    row_num, existing = None, None
+    cache, row_map = _get_progress_cache(progress_ws)
+    key = (kelas, nama, activity_title)
+
+    if key in row_map:
+        row_num = row_map[key]
+        existing = cache.get(key)
 
     previous_mastered = set()
     if existing and existing.get("MasteredNumbers"):
@@ -224,6 +239,13 @@ def save_results(
         progress_ws.update(f"A{row_num}:H{row_num}", [row_values])
     else:
         progress_ws.append_row(row_values)
+        row_num = st.session_state["progress_next_row"]
+        st.session_state["progress_next_row"] += 1
+        row_map[key] = row_num
+
+    # Update cache lokal supaya submission berikutnya di sesi yang sama
+    # tidak perlu baca API lagi.
+    cache[key] = dict(zip(PROGRESS_HEADERS, [str(v) for v in row_values]))
 
     remaining = sorted(
         {str(r["number"]) for r in results} - all_mastered, key=_sort_key
