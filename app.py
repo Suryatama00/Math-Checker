@@ -9,11 +9,13 @@ try:
     st = importlib.import_module("streamlit")
     genai = importlib.import_module("google.genai")
     types = importlib.import_module("google.genai.types")
+    sheets = importlib.import_module("sheets")
 except ModuleNotFoundError as exc:
     missing_package = exc.name or "required package"
     raise SystemExit(
         f"Missing dependency: {missing_package}. "
-        "Install dependencies with: pip install streamlit google-genai"
+        "Install dependencies with: pip install streamlit google-genai "
+        "gspread google-auth"
     ) from exc
 
 # -----------------------------
@@ -75,6 +77,37 @@ st.set_page_config(
 
 st.title("📐 Math Self-Check")
 st.caption("Foto jawabanmu, langsung tahu mana yang benar dan salah.")
+
+# -----------------------------
+# Pilih Kelas & Nama
+# -----------------------------
+
+try:
+    roster = sheets.get_roster()
+except Exception as e:
+    st.error(
+        "Gagal terhubung ke Google Sheets (database nilai). "
+        "Cek SPREADSHEET_ID dan kredensial service account."
+    )
+    st.exception(e)
+    st.stop()
+
+if not roster:
+    st.warning(
+        "Tab 'Siswa' di Google Sheets masih kosong. Isi dulu kolom "
+        "Kelas dan Nama di sana."
+    )
+    st.stop()
+
+col1, col2 = st.columns(2)
+
+with col1:
+    kelas = st.selectbox("Kelas", options=sorted(roster.keys()))
+
+with col2:
+    nama = st.selectbox("Nama", options=sorted(roster[kelas]))
+
+st.divider()
 
 # -----------------------------
 # Pilih aktivitas
@@ -243,9 +276,6 @@ if image:
         if not results:
             st.warning("Tidak ada jawaban yang terbaca dari foto ini.")
         else:
-            n_correct = sum(1 for r in results if r["status"] == "correct")
-            n_total = len(results)
-
             for r in sorted(results, key=lambda r: str(r["number"])):
                 number = r["number"]
                 status = r["status"]
@@ -260,4 +290,22 @@ if image:
                         f"terbaca jelas ⚠️"
                     )
 
-            st.info(f"Skor: {n_correct} / {n_total} benar")
+            try:
+                summary = sheets.save_results(
+                    kelas=kelas,
+                    nama=nama,
+                    activity_title=activity["title"],
+                    results=results,
+                )
+                st.info(
+                    f"Nilai: {summary['correct']} / {summary['total']} "
+                    f"benar ({summary['percentage']}%) — tersimpan untuk "
+                    f"**{nama}** ({kelas})"
+                )
+            except Exception as e:
+                st.error(
+                    "Hasil berhasil dibaca, tapi GAGAL disimpan ke "
+                    "Google Sheets. Screenshot hasil ini dulu untuk "
+                    "jaga-jaga, lalu laporkan ke guru."
+                )
+                st.exception(e)
