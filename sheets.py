@@ -2,11 +2,17 @@
 Modul untuk koneksi dan baca/tulis data ke Google Sheets, dipakai sebagai
 "database" hasil pengecekan jawaban siswa.
 
-Struktur spreadsheet yang diharapkan (3 tab / worksheet):
+Struktur spreadsheet (3 tab):
 
-  Siswa            -> kolom: Kelas, Nama
-  Hasil_Detail     -> kolom: Timestamp, Kelas, Nama, Aktivitas, Nomor, Status
-  Hasil_Ringkasan  -> kolom: Timestamp, Kelas, Nama, Aktivitas, Benar, Total, Persentase
+  Siswa      -> Kelas, Nama
+  Hasil_Log  -> Timestamp, Kelas, Nama, Aktivitas, Benar, Unclear, Salah
+                (tiap kolom Benar/Unclear/Salah berisi nomor dipisah koma,
+                 mewakili HASIL ATTEMPT INI SAJA, bukan akumulasi)
+  Progress   -> Kelas, Nama, Aktivitas, MasteredNumbers, Benar, Total,
+                Persentase, LastUpdated
+                (satu baris per siswa+aktivitas, MasteredNumbers = semua
+                 nomor yang PERNAH benar di attempt manapun -> ini nilai
+                 resminya, terus di-update/upsert tiap ada foto baru)
 """
 
 import os
@@ -33,16 +39,16 @@ SCOPES = [
 ]
 
 SISWA_HEADERS = ["Kelas", "Nama"]
-DETAIL_HEADERS = ["Timestamp", "Kelas", "Nama", "Aktivitas", "Nomor", "Status"]
-RINGKASAN_HEADERS = [
-    "Timestamp", "Kelas", "Nama", "Aktivitas", "Benar", "Total", "Persentase",
+LOG_HEADERS = [
+    "Timestamp", "Kelas", "Nama", "Aktivitas", "Benar", "Unclear", "Salah",
+]
+PROGRESS_HEADERS = [
+    "Kelas", "Nama", "Aktivitas", "MasteredNumbers",
+    "Benar", "Total", "Persentase", "LastUpdated",
 ]
 
 
 def _get_service_account_info() -> dict:
-    """Ambil kredensial service account dari Streamlit secrets (cloud)
-    atau dari file lokal service_account.json (untuk testing lokal)."""
-
     try:
         return dict(st.secrets["gcp_service_account"])
     except Exception:
@@ -80,16 +86,13 @@ def _get_spreadsheet_id() -> str:
 
 @st.cache_resource(show_spinner=False)
 def get_spreadsheet():
-    """Buka spreadsheet Google Sheets, cache supaya tidak login ulang
-    setiap kali fungsi dipanggil."""
-
     info = _get_service_account_info()
     creds = Credentials.from_service_account_info(info, scopes=SCOPES)
     client = gspread.authorize(creds)
     return client.open_by_key(_get_spreadsheet_id())
 
 
-def _get_or_create_worksheet(sh, name: str, headers: list[str]):
+def _get_or_create_worksheet(sh, name: str, headers: list):
     try:
         ws = sh.worksheet(name)
     except gspread.WorksheetNotFound:
@@ -97,7 +100,6 @@ def _get_or_create_worksheet(sh, name: str, headers: list[str]):
         ws.append_row(headers)
         return ws
 
-    # Pastikan header ada kalau worksheet baru dibuat manual dan kosong
     if not ws.get_all_values():
         ws.append_row(headers)
 
@@ -106,18 +108,11 @@ def _get_or_create_worksheet(sh, name: str, headers: list[str]):
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_roster() -> dict:
-    """Ambil daftar Kelas -> [Nama, ...] dari tab 'Siswa'.
-
-    Di-cache 60 detik supaya tidak nge-hit Google Sheets API setiap
-    kali dropdown dirender, tapi tetap cukup responsif kalau guru baru
-    saja menambah nama.
-    """
-
     sh = get_spreadsheet()
     ws = _get_or_create_worksheet(sh, "Siswa", SISWA_HEADERS)
     records = ws.get_all_records()
 
-    roster: dict[str, list[str]] = {}
+    roster = {}
     for row in records:
         kelas = str(row.get("Kelas", "")).strip()
         nama = str(row.get("Nama", "")).strip()
@@ -128,37 +123,116 @@ def get_roster() -> dict:
     return roster
 
 
+def _sort_key(n: str):
+    """Urutkan nomor secara alami: 1,2,...,10 lalu 1a,1b jika ada huruf."""
+    try:
+        return (0, int(n), "")
+    except ValueError:
+        digits = "".join(ch for ch in n if ch.isdigit())
+        letters = "".join(ch for ch in n if not ch.isdigit())
+        return (1, int(digits) if digits else 0, letters)
+
+
+def _find_progress_row(ws, kelas: str, nama: str, activity_title: str):
+    """Cari baris progress yang sudah ada untuk siswa+aktivitas ini.
+    Return (nomor_baris_di_sheet, dict_baris) atau (None, None)."""
+
+    values = ws.get_all_values()
+    if len(values) < 2:
+        return None, None
+
+    header = values[0]
+    for i, row in enumerate(values[1:], start=2):
+        row_dict = dict(zip(header, row))
+        if (
+            row_dict.get("Kelas") == kelas
+            and row_dict.get("Nama") == nama
+            and row_dict.get("Aktivitas") == activity_title
+        ):
+            return i, row_dict
+
+    return None, None
+
+
 def save_results(
     kelas: str,
     nama: str,
     activity_title: str,
-    results: list[dict],
+    results: list,
 ) -> dict:
-    """Simpan hasil pengecekan ke tab Hasil_Detail dan Hasil_Ringkasan.
-
-    Mengembalikan dict berisi jumlah benar, total, dan persentase.
-    """
+    """Simpan hasil attempt ke Hasil_Log, lalu update mastery kumulatif
+    di Progress. Mengembalikan ringkasan nilai KUMULATIF (bukan cuma
+    attempt ini saja)."""
 
     sh = get_spreadsheet()
-    detail_ws = _get_or_create_worksheet(sh, "Hasil_Detail", DETAIL_HEADERS)
-    ringkasan_ws = _get_or_create_worksheet(
-        sh, "Hasil_Ringkasan", RINGKASAN_HEADERS
-    )
+    log_ws = _get_or_create_worksheet(sh, "Hasil_Log", LOG_HEADERS)
+    progress_ws = _get_or_create_worksheet(sh, "Progress", PROGRESS_HEADERS)
 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    detail_rows = [
-        [timestamp, kelas, nama, activity_title, r["number"], r["status"]]
-        for r in results
-    ]
-    detail_ws.append_rows(detail_rows)
+    attempt_correct = {
+        str(r["number"]) for r in results if r["status"] == "correct"
+    }
+    attempt_unclear = {
+        str(r["number"]) for r in results if r["status"] == "unclear"
+    }
+    attempt_incorrect = {
+        str(r["number"]) for r in results if r["status"] == "incorrect"
+    }
 
-    n_correct = sum(1 for r in results if r["status"] == "correct")
-    n_total = len(results)
-    percentage = round((n_correct / n_total) * 100, 1) if n_total else 0
+    log_ws.append_row([
+        timestamp,
+        kelas,
+        nama,
+        activity_title,
+        ", ".join(sorted(attempt_correct, key=_sort_key)),
+        ", ".join(sorted(attempt_unclear, key=_sort_key)),
+        ", ".join(sorted(attempt_incorrect, key=_sort_key)),
+    ])
 
-    ringkasan_ws.append_row(
-        [timestamp, kelas, nama, activity_title, n_correct, n_total, percentage]
+    row_num, existing = _find_progress_row(
+        progress_ws, kelas, nama, activity_title
     )
 
-    return {"correct": n_correct, "total": n_total, "percentage": percentage}
+    previous_mastered = set()
+    if existing and existing.get("MasteredNumbers"):
+        previous_mastered = {
+            n.strip() for n in existing["MasteredNumbers"].split(",")
+            if n.strip()
+        }
+
+    newly_mastered = attempt_correct - previous_mastered
+    all_mastered = previous_mastered | attempt_correct
+    mastered_sorted = sorted(all_mastered, key=_sort_key)
+
+    total = len(results)
+    n_correct = len(mastered_sorted)
+    percentage = round((n_correct / total) * 100, 1) if total else 0
+
+    row_values = [
+        kelas,
+        nama,
+        activity_title,
+        ", ".join(mastered_sorted),
+        n_correct,
+        total,
+        percentage,
+        timestamp,
+    ]
+
+    if row_num:
+        progress_ws.update(f"A{row_num}:H{row_num}", [row_values])
+    else:
+        progress_ws.append_row(row_values)
+
+    remaining = sorted(
+        {str(r["number"]) for r in results} - all_mastered, key=_sort_key
+    )
+
+    return {
+        "correct": n_correct,
+        "total": total,
+        "percentage": percentage,
+        "newly_mastered": sorted(newly_mastered, key=_sort_key),
+        "remaining": remaining,
+    }
