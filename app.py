@@ -131,25 +131,13 @@ with st.expander("📋 Tips supaya hasilnya akurat"):
         - Tulisan harus jelas terbaca, hindari coretan berlebihan
         - Gunakan pencahayaan yang cukup, hindari bayangan
         - Pegang kamera tegak lurus di atas kertas
-        - Tulis jawaban akhir dengan format: `[nomor] Jawaban: ...`
+        - Kalau jawaban kepotong jadi beberapa halaman, foto satu-satu
+          lalu klik "Tambah ke antrian" untuk tiap halaman
         """
     )
 
 # -----------------------------
-# Ambil / upload foto
-# -----------------------------
-
-st.subheader("📷 Foto jawabanmu")
-
-camera_image = st.camera_input("Ambil foto")
-uploaded_image = st.file_uploader(
-    "Atau upload foto", type=["jpg", "jpeg", "png"]
-)
-
-image = camera_image or uploaded_image
-
-# -----------------------------
-# Fungsi inti: cek jawaban
+# Fungsi inti: cek jawaban (mendukung banyak gambar sekaligus)
 # -----------------------------
 
 
@@ -157,22 +145,26 @@ def build_prompt(answer_key: dict) -> str:
     return f"""
 Kamu adalah sistem pembaca tulisan tangan dan pemeriksa jawaban matematika.
 
-Gambar berisi jawaban tulisan tangan seorang siswa untuk beberapa soal
-bernomor.
+Kamu akan diberi SATU ATAU LEBIH gambar. Semua gambar itu adalah bagian
+dari jawaban tulisan tangan SATU siswa yang sama untuk soal-soal
+bernomor (jawabannya mungkin tersebar di beberapa gambar/halaman).
 
 Kunci jawaban guru:
 {json.dumps(answer_key, indent=2, ensure_ascii=False)}
 
 Untuk SETIAP nomor pada kunci jawaban di atas:
-1. Temukan jawaban akhir siswa untuk nomor tersebut.
+1. Cari jawaban akhir siswa untuk nomor tersebut di SEMUA gambar yang
+   diberikan (nomor yang sama tidak akan muncul dobel di lebih dari satu
+   gambar, tapi kamu perlu memeriksa semua gambar untuk menemukannya).
 2. Bandingkan dengan kunci jawaban guru.
 3. Terima bentuk yang secara matematis setara (misalnya 1/2 setara 0.5)
    sebagai benar.
 4. Faktor perkalian yang dibolak-balik urutannya (sifat komutatif),
-    misalnya (x+2)(x+3)=0 dianggap SAMA dengan (x+3)(x+2)=0 — urutan
-    penulisan faktor tidak memengaruhi kebenaran jawaban
-5. Jika tulisan tangan tidak bisa dibaca dengan yakin, ATAU nomor tersebut
-   tidak ditemukan di foto, gunakan status "unclear" — jangan menebak.
+   misalnya (x+2)(x+3)=0 dianggap SAMA dengan (x+3)(x+2)=0 — urutan
+   penulisan faktor tidak memengaruhi kebenaran jawaban.
+5. Jika tulisan tangan tidak bisa dibaca dengan yakin, ATAU nomor
+   tersebut tidak ditemukan di gambar manapun, gunakan status "unclear"
+   — jangan menebak.
 6. Jangan menuliskan penjelasan, langkah pengerjaan, atau membocorkan
    kunci jawaban ke output.
 
@@ -211,8 +203,11 @@ RESPONSE_SCHEMA = {
 }
 
 
-def check_math(image_bytes: bytes, mime_type: str, answer_key: dict) -> dict:
-    """Kirim foto + kunci jawaban ke Gemini, dapatkan hasil terstruktur.
+def check_math(images: list, answer_key: dict) -> dict:
+    """Kirim satu atau lebih foto + kunci jawaban ke Gemini dalam SATU
+    panggilan API, dapatkan hasil terstruktur gabungan.
+
+    images: list berisi tuple (image_bytes, mime_type).
 
     Server Gemini kadang membalas 503 (sedang sibuk) yang sifatnya
     sementara, jadi kita coba ulang beberapa kali dengan jeda sebelum
@@ -220,7 +215,11 @@ def check_math(image_bytes: bytes, mime_type: str, answer_key: dict) -> dict:
     """
 
     prompt = build_prompt(answer_key)
-    image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+    image_parts = [
+        types.Part.from_bytes(data=data, mime_type=mime)
+        for data, mime in images
+    ]
+    contents = [prompt] + image_parts
 
     max_attempts = 3
     last_error = None
@@ -229,7 +228,7 @@ def check_math(image_bytes: bytes, mime_type: str, answer_key: dict) -> dict:
         try:
             response = client.models.generate_content(
                 model=MODEL_NAME,
-                contents=[prompt, image_part],
+                contents=contents,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_schema=RESPONSE_SCHEMA,
@@ -248,23 +247,97 @@ def check_math(image_bytes: bytes, mime_type: str, answer_key: dict) -> dict:
 
 
 # -----------------------------
-# UI: proses dan tampilkan hasil
+# Antrian foto (session state)
 # -----------------------------
 
-if image:
-    st.image(image, caption="Jawabanmu", width="stretch")
+if "queue" not in st.session_state:
+    st.session_state["queue"] = []  # list of dict: {bytes, mime, name}
 
-    if st.button("✅ Cek jawabanku", type="primary"):
+if "capture_key" not in st.session_state:
+    st.session_state["capture_key"] = 0
 
-        mime_type = image.type or "image/jpeg"
+if "uploader_key" not in st.session_state:
+    st.session_state["uploader_key"] = 0
 
-        with st.spinner("Membaca dan memeriksa jawaban..."):
+
+def _reset_capture_widget():
+    st.session_state["capture_key"] += 1
+
+
+def _add_to_queue(file_obj):
+    st.session_state["queue"].append({
+        "bytes": file_obj.getvalue(),
+        "mime": file_obj.type or "image/jpeg",
+        "name": getattr(file_obj, "name", "foto"),
+    })
+
+
+st.subheader("📷 Foto jawabanmu")
+st.caption(
+    f"Sedang mengisi untuk: **{nama}** ({kelas}) — "
+    f"{activity['title']}"
+)
+
+tab_camera, tab_upload = st.tabs(["Kamera", "Upload file"])
+
+with tab_camera:
+    camera_image = st.camera_input(
+        "Ambil foto", key=f"camera_{st.session_state['capture_key']}"
+    )
+    if camera_image is not None:
+        if st.button("➕ Tambah foto ini ke antrian"):
+            _add_to_queue(camera_image)
+            _reset_capture_widget()
+            st.rerun()
+
+with tab_upload:
+    uploaded_files = st.file_uploader(
+        "Pilih satu atau beberapa foto",
+        type=["jpg", "jpeg", "png"],
+        accept_multiple_files=True,
+        key=f"uploader_{st.session_state['uploader_key']}",
+    )
+    if uploaded_files:
+        if st.button("➕ Tambah semua ke antrian"):
+            for f in uploaded_files:
+                _add_to_queue(f)
+            st.session_state["uploader_key"] += 1
+            st.rerun()
+
+# -----------------------------
+# Tampilkan antrian
+# -----------------------------
+
+queue = st.session_state["queue"]
+
+if queue:
+    st.write(f"**Antrian foto ({len(queue)}):**")
+    cols = st.columns(min(len(queue), 4))
+    for i, item in enumerate(queue):
+        with cols[i % len(cols)]:
+            st.image(item["bytes"], width="stretch")
+            if st.button("🗑 Hapus", key=f"remove_{i}"):
+                st.session_state["queue"].pop(i)
+                st.rerun()
+
+    st.divider()
+
+    check_clicked = st.button(
+        f"✅ Cek semua foto ({len(queue)})", type="primary"
+    )
+
+    if check_clicked:
+        images = [(item["bytes"], item["mime"]) for item in queue]
+
+        with st.spinner("Membaca dan memeriksa jawaban dari semua foto..."):
             try:
-                data = check_math(image.getvalue(), mime_type, answer_key)
+                data = check_math(images, answer_key)
             except Exception as e:
                 st.error(
-                    "Terjadi kesalahan saat memproses foto. "
-                    "Coba ambil foto ulang dengan pencahayaan lebih baik."
+                    "Gagal memproses foto setelah beberapa kali percobaan. "
+                    "Kemungkinan server Gemini sedang sibuk — coba lagi "
+                    "sebentar lagi, atau ambil foto ulang dengan "
+                    "pencahayaan lebih baik."
                 )
                 st.exception(e)
                 st.stop()
@@ -309,6 +382,12 @@ if image:
                     )
                 else:
                     st.success("🎉 Semua nomor sudah pernah benar!")
+
+                # Kosongkan antrian setelah berhasil disimpan, siap untuk
+                # siswa berikutnya (Kelas/Nama tetap seperti sebelumnya,
+                # tinggal diganti kalau lanjut ke siswa lain).
+                st.session_state["queue"] = []
+
             except Exception as e:
                 st.error(
                     "Hasil berhasil dibaca, tapi GAGAL disimpan ke "
@@ -316,3 +395,8 @@ if image:
                     "jaga-jaga, lalu laporkan ke guru."
                 )
                 st.exception(e)
+else:
+    st.caption(
+        "Belum ada foto di antrian. Ambil/upload foto lalu klik "
+        "tombol \"Tambah ke antrian\" di atas."
+    )
