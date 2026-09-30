@@ -1,4 +1,19 @@
 {
+  "pemfaktoran-latihan-tambahan": {
+    "title": "Latihan Tambahan - Pemfaktoran",
+    "questions": {
+      "1": "Hasil faktor: (x+3)(x+4)=0; Nilai x: x=-3 atau x=-4",
+      "2": "Hasil faktor: (x-8)(x+3)=0; Nilai x: x=8 atau x=-3",
+      "3": "Hasil faktor: (2x+1)(x+3)=0; Nilai x: x=-1/2 atau x=-3",
+      "4": "Hasil faktor: (3x+1)(x-2)=0; Nilai x: x=-1/3 atau x=2",
+      "5": "Hasil faktor: (2x-5)(2x+3)=0; Nilai x: x=5/2 atau x=-3/2",
+      "6": "Hasil faktor: (5x-1)(x+3)=0; Nilai x: x=1/5 atau x=-3",
+      "7": "Hasil faktor: (3x+2)(2x-3)=0; Nilai x: x=-2/3 atau x=3/2",
+      "8": "Hasil faktor: (x+5)(x-3)=0; Nilai x: x=-5 atau x=3",
+      "9": "Hasil faktor: (2x-5)(x-2)=0; Nilai x: x=5/2 atau x=2",
+      "10": "Hasil faktor: (3x+2)(x+3)=0; Nilai x: x=-2/3 atau x=-3"
+    }
+  },
   "pemfaktoran-latihan1": {
     "title": "Latihan 1 - Pemfaktoran Bentuk Kuadrat",
     "questions": {
